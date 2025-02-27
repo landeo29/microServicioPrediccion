@@ -61,8 +61,8 @@ def calcular_mae(valores_reales, valores_predichos):
 
 app = FastAPI()
 
-@app.get("/fastapi/predict")
-def predecir_estres(): 
+@app.get("/predict")
+def predecir_estres():
     global model
     if model is None:
         load_model()
