@@ -1,7 +1,7 @@
 import tensorflow as tf
 import numpy as np
 import mysql.connector, os
-from fastapi import FastAPI
+from fastapi import FastAPI, Query
 from pydantic import BaseModel
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
