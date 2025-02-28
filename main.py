@@ -22,58 +22,61 @@ model = None
 def load_model():
     global model
     try:
-        print("Cargando modelo...")
+        print("cargando modelo...")
         model = tf.keras.models.load_model("modelo_estres_dinamico.h5")
-        print("Modelo cargado correctamente.")
+        print("modelo cargado correctamente.")
     except Exception as e:
-        print("Error al cargar el modelo:", e)
+        print("error al cargar el modelo:", e)
 
-def obtener_datos_historicos():
+# Obtener datos históricos de la empresa
+def obtener_datos_historicos(empresa_id: int):
     try:
+        print(f"obteniendo datos para empresa_id: {empresa_id}")  # Debug
+
         conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
         cursor.execute("""
-            SELECT DATE(created_at) as fecha, ROUND(AVG(caritas), 2) as promedio_caritas
-            FROM user_estres_sessions
-            WHERE caritas IS NOT NULL
+            SELECT DATE(s.created_at) as fecha, ROUND(AVG(s.caritas), 2) as promedio_caritas
+            FROM user_estres_sessions s
+            JOIN users u ON s.user_id = u.id
+            WHERE s.caritas IS NOT NULL AND u.empresa_id = %s
             GROUP BY fecha
             ORDER BY fecha ASC;
-        """)
+        """, (empresa_id,))
         datos = cursor.fetchall()
         conn.close()
 
-        if len(datos) < 7:
-            print("No hay suficientes datos históricos para hacer predicciones.")
-            return None
-
-        for row in datos:
-            row["promedio_caritas"] = float(row["promedio_caritas"])
+        if not datos:
+            print(f"no hay datos históricos para la empresa {empresa_id}.")
+            return {"error": f"no hay datos de estrés registrados para la empresa {empresa_id}."}
 
         return datos
     except Exception as e:
-        print("Error al obtener datos históricos:", e)
-        return None
+        print("error al obtener datos históricos:", e)
+        return {"error": "error interno al obtener datos históricos."}
+
 
 
 def calcular_mae(valores_reales, valores_predichos):
     errores = [abs(real - predicho) for real, predicho in zip(valores_reales, valores_predichos)]
-    return sum(errores) / len(errores)
+    return sum(errores) / len(errores) if errores else 0
 
 app = FastAPI()
 
 @app.get("/predict")
-def predecir_estres():
+def predecir_estres(id_empresa: int = Query(..., description="ID de la empresa")):
     global model
     if model is None:
         load_model()
         if model is None:
             return {"error": "No se pudo cargar el modelo"}
 
-    historial = obtener_datos_historicos()
-    if not historial:
-        return {"error": "No hay suficientes datos históricos"}
+    historial = obtener_datos_historicos(id_empresa)
 
-    caritas_values = [row["promedio_caritas"] for row in historial]
+    if isinstance(historial, dict) and "error" in historial:
+        return historial  
+
+    caritas_values = [float(row["promedio_caritas"]) for row in historial]
 
     if len(caritas_values) < 7:
         return {
@@ -88,7 +91,6 @@ def predecir_estres():
 
     prediccion_tensor = model.predict(X_input)
     valores_predichos_normalizados = prediccion_tensor.flatten()
-
     valores_predichos_escalados = [(valor * (3 - 1)) + 1 for valor in valores_predichos_normalizados]
 
     ultima_fecha = datetime.strptime(str(historial[-1]["fecha"]), "%Y-%m-%d")
@@ -103,10 +105,11 @@ def predecir_estres():
     return {
         "historico": [{"fecha": row["fecha"], "caritas": row["promedio_caritas"]} for row in historial],
         "prediccion": predicciones,
-        "precision": f"{precision:.2f}%"
+        "precision": f"{precision:.2f}%",
+        "id_empresa": id_empresa
     }
 
 if __name__ == "__main__":
     import uvicorn
     load_model()
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8000) 
